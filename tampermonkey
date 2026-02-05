@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Lokalise Auto-Translator (Gemini Fix URL)
+// @name         Lokalise Auto-Translator (Gemini 3.3 - Smart Resume)
 // @namespace    http://tampermonkey.net/
-// @version      1.9
+// @version      3.3
 // @grant        GM_xmlhttpRequest
 // @connect      generativelanguage.googleapis.com
 // @match        https://app.lokalise.com/project/*
@@ -12,18 +12,17 @@
 // ============================================================
 function getScriptConfig() {
     return {
-        GEMINI_API_KEY: '',
+        GEMINI_API_KEY: 'ВАШ_GEMINI_API_KEY',
         TARGET_LANG_ID: '748',
         SOURCE_LANG_ID: '640',
-        MODEL: "gemini-2.5-flash", // если не заработает, попробуйте "gemini-pro"
-        SCROLL_DELAY: 1500,
-        DEBUG_MODE: true,
+        MODEL: "gemini-2.5-flash",
+        SCROLL_DELAY: 2000,
+        DEBUG_MODE: false,               // TRUE - только первые 15 пустых строк
     };
 }
 // ============================================================
 // КОНЕЦ КОНФИГА
 // ============================================================
-
 
 (function() {
     'use strict';
@@ -33,7 +32,6 @@ function getScriptConfig() {
     let translationMap = new Map();
     let isStopped = false;
 
-    // Интерфейс
     const container = document.createElement('div');
     container.style = 'position:fixed;top:10px;right:10px;z-index:9999;display:flex;gap:5px;';
     document.body.appendChild(container);
@@ -52,7 +50,7 @@ function getScriptConfig() {
     stopBtn.onclick = () => { isStopped = true; console.warn("🛑 Остановка..."); };
 
     startBtn.onclick = async () => {
-        console.log(`%c--- ЗАПУСК 3.2 [DEBUG: ${CONFIG.DEBUG_MODE}] ---`, "color: #1a73e8; font-weight: bold;");
+        console.log(`%c--- ЗАПУСК 3.3 [RESUME MODE, DEBUG: ${CONFIG.DEBUG_MODE}] ---`, "color: #1a73e8; font-weight: bold;");
         isStopped = false;
         startBtn.disabled = true;
         stopBtn.style.display = 'block';
@@ -60,6 +58,12 @@ function getScriptConfig() {
 
         try {
             if (!(await scrollAndCollect()) || isStopped) return;
+
+            if (translationMap.size === 0) {
+                console.log("%c--- ВСЕ ПЕРЕВЕДЕНО (Пустых строк не найдено) ---", "color: green; font-weight: bold;");
+                return;
+            }
+
             if (!(await translateWithGemini()) || isStopped) return;
             await fillTranslations();
             console.log("%c--- ВСЁ ЗАВЕРШЕНО ---", "color: green; font-weight: bold;");
@@ -67,7 +71,7 @@ function getScriptConfig() {
             console.error(`❌ Ошибка: ${err}`);
         } finally {
             startBtn.disabled = false;
-            startBtn.innerHTML = '🚀 Start Automation';
+            startBtn.innerHTML = '🚀 Запуск перевода';
             stopBtn.style.display = 'none';
         }
     };
@@ -78,18 +82,30 @@ function getScriptConfig() {
         while (sameHeightCount < 3) {
             if (isStopped) return false;
             const rows = document.querySelectorAll('.row-key[data-id]');
+
             for (let row of rows) {
                 const id = row.getAttribute('data-id');
                 const originalText = row.querySelector(`.base-cell-trans .highlight`)?.innerText;
-                if (id && originalText && !translationMap.has(id)) {
+
+                // Проверка: есть ли уже перевод?
+                const targetCell = row.querySelector(`.cell-trans[data-lang-id="${CONFIG.TARGET_LANG_ID}"] .highlight`);
+                // В Lokalise пустая ячейка содержит span.empty или текст "Empty"
+                const isEmpty = !targetCell || targetCell.querySelector('.empty') || targetCell.innerText.trim() === "" || targetCell.innerText.trim() === "Empty";
+
+                if (id && originalText && isEmpty && !translationMap.has(id)) {
                     if (CONFIG.DEBUG_MODE && translationMap.size >= 15) {
                         window.scrollTo(0, 0);
                         return true;
                     }
+                    console.log(`[Сбор] ID: ${id} (Пустой) | EN: "${originalText.substring(0, 30)}..."`);
                     translationMap.set(id, { original: originalText, translation: '' });
+                } else if (id && !isEmpty && !translationMap.has(id)) {
+                    // Лог для понимания, что мы пропускаем
+                    // console.log(`[Пропуск] ID: ${id} уже имеет перевод.`);
                 }
             }
-            startBtn.innerHTML = `📡 Сбор: ${translationMap.size}`;
+
+            startBtn.innerHTML = `📡 Сбор пустых: ${translationMap.size}`;
             window.scrollBy(0, window.innerHeight);
             await new Promise(r => setTimeout(r, CONFIG.SCROLL_DELAY));
             let h = document.body.scrollHeight;
@@ -106,51 +122,40 @@ function getScriptConfig() {
         const entries = Array.from(translationMap.entries());
         const texts = entries.map(e => e[1].original);
 
-        console.log(`[API] Отправка ${texts.length} строк с расширенным контекстом...`);
+        console.log(`[API] Отправка ${texts.length} пустых строк в Gemini...`);
 
-        // Формируем детальный промпт
         const prompt = `Role: Act as a professional translator and Polish localization expert. Your task is to translate video scripts from English to Polish.
 
-Context: This is business/personal development coaching, meditations, sports lessons, psychology podcasts – use professional but accessible terminology.
-
-Style:
-- Translate naturally using "living" language used by a Native Speaker (avoid stiff, machine-like constructions).
-- Focus on flow and clarity suitable for audio/video narration.
-
-Grammar & Speaker Identity (Crucial):
-- Pay strict attention to grammatical correctness: check verb aspects, tenses, and declension endings.
-- Identify the gender of the speaker/narrator. If the speaker is a woman:
+Context: This is business/personal development coaching, meditations, sports lessons, psychology podcasts.
+Style: Natural "living" language. Focus on flow.
+Grammar: If the speaker is a woman:
   1. Use feminine verb forms (e.g., "zrobiłam", "powiedziałam").
-  2. Use appropriate feminine forms for professions and roles (feminatives) instead of generic masculine ones (e.g., use "trenerka", "ekspertka").
+  2. Use feminatives (e.g., "trenerka", "ekspertka").
 
-IMPORTANT: You MUST respond ONLY with a valid JSON object.
+IMPORTANT: Respond ONLY with a valid JSON object.
 Structure: {"translations": ["translated_string_1", "translated_string_2", ...]}
-The order of the translations must match the input array exactly. No conversational text or markdown blocks.
+Order must match the input array exactly.
 
 Texts to translate: ${JSON.stringify(texts)}`;
 
         try {
             const resp = await fetchGemini(prompt);
-
-            // Логируем сырой ответ для контроля качества перевода
             console.log("%c[API RAW RESPONSE]:", "color: #7b1fa2; font-weight: bold;", resp);
 
-            const first = resp.indexOf('{');
-            const last = resp.lastIndexOf('}');
+            const first = resp.indexOf('{'), last = resp.lastIndexOf('}');
             const data = JSON.parse(resp.substring(first, last + 1));
             const list = data.translations;
 
-            if (!Array.isArray(list)) throw new Error("Response field 'translations' is not an array");
+            if (!Array.isArray(list)) throw new Error("Field 'translations' is not an array");
 
             entries.forEach((e, i) => {
                 translationMap.get(e[0]).translation = list[i] || '';
             });
 
-            console.log("%c[API] Переводы успешно сопоставлены с ID.", "color: green;");
+            console.log("%c[API] Переводы получены и сопоставлены.", "color: green;");
             return true;
         } catch (e) {
             console.error("❌ API Error:", e);
-            alert("Ошибка Gemini: " + e.message);
             return false;
         }
     }
@@ -161,29 +166,20 @@ Texts to translate: ${JSON.stringify(texts)}`;
             if (isStopped) return;
             const id = ids[i];
             const data = translationMap.get(id);
-
             startBtn.innerHTML = `✍️ ${i+1}/${ids.length}`;
-            console.log(`[ID ${id}] Вставка: "${data.translation.substring(0, 30)}..."`);
 
             let row = document.querySelector(`.row-key[data-id="${id}"]`);
             let attempts = 0;
-
-            // Динамический поиск строки при скролле
             while (!row && attempts < 10) {
                 if (isStopped) return;
                 window.scrollBy(0, 400);
-                await new Promise(r => setTimeout(r, 250));
+                await new Promise(r => setTimeout(r, 200));
                 row = document.querySelector(`.row-key[data-id="${id}"]`);
                 attempts++;
             }
-
             if (row) {
-                // Вызываем метод ввода из предыдущих версий (с очисткой и Save)
                 await inputProcess(row, data.translation, id);
-                // Короткая пауза между строками для стабильности Lokalise
                 await new Promise(r => setTimeout(r, 500));
-            } else {
-                console.warn(`[!] Не удалось найти в DOM строку с ID ${id}`);
             }
         }
     }
@@ -200,53 +196,44 @@ Texts to translate: ${JSON.stringify(texts)}`;
 
         if (editor) {
             editor.focus();
-            editor.click(); // Дополнительный клик внутрь для фокуса
+            editor.click();
             await new Promise(r => setTimeout(r, 200));
 
             const modifier = isMac ? { metaKey: true } : { ctrlKey: true };
 
-            // 1. ПОПЫТКА ВЫДЕЛИТЬ ВСЁ (КЛАВИШАМИ)
-            console.log("   -> Симуляция Select All...");
-            editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', code: 'KeyA', keyCode: 65, which: 65, ...modifier, bubbles: true }));
+            // ОЧИСТКА
+            editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', code: 'KeyA', keyCode: 65, ...modifier, bubbles: true }));
             document.execCommand('selectAll', false, null);
             await new Promise(r => setTimeout(r, 100));
 
-            // 2. ПОПЫТКА УДАЛИТЬ (BACKSPACE)
-            console.log("   -> Симуляция Backspace...");
-            editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', keyCode: 8, which: 8, bubbles: true }));
+            editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', keyCode: 8, bubbles: true }));
             document.execCommand('delete', false, null);
 
-            // СИЛОВОЕ ОБНУЛЕНИЕ (если команды не сработали)
             if (editor.value) editor.value = '';
-            if (editor.innerText) editor.innerText = '';
             editor.dispatchEvent(new Event('input', { bubbles: true }));
-
             await new Promise(r => setTimeout(r, 200));
 
-            // 3. ВСТАВКА
-            console.log(`   -> Вставка перевода...`);
+            // ВСТАВКА
+            console.log(`   -> Вставляю: "${text.substring(0, 30)}..."`);
             document.execCommand('insertText', false, text);
 
-            // Если всё еще пусто
             if (!editor.value && !editor.innerText) {
                 editor.value = text;
                 editor.dispatchEvent(new Event('input', { bubbles: true }));
             }
 
-            // Уведомляем систему об изменениях
             editor.dispatchEvent(new Event('change', { bubbles: true }));
             await new Promise(r => setTimeout(r, 600));
 
-            // 4. СОХРАНЕНИЕ
+            // СОХРАНЕНИЕ
             const saveBtn = document.querySelector('button.save.btn-primary');
             if (saveBtn) {
-                console.log("   -> Нажатие SAVE");
                 saveBtn.click();
             } else {
                 editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', ...modifier, bubbles: true }));
             }
 
-            // Ждем закрытия
+            // Ожидание закрытия
             for(let i=0; i<15; i++) {
                 const stillOpen = document.querySelector('.ace_text-input, textarea:not([style*="display: none"])');
                 if (!stillOpen) {
