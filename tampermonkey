@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Lokalise Auto-Translator (Gemini 3.5 - ID Mapping)
+// @name         Lokalise Auto-Translator (Gemini 2.5-Flash + ID Mapping)
 // @namespace    http://tampermonkey.net/
 // @version      3.5
 // @grant        GM_xmlhttpRequest
@@ -15,7 +15,7 @@ function getScriptConfig() {
         GEMINI_API_KEY: '',
         TARGET_LANG_ID: '748',
         SOURCE_LANG_ID: '640',
-        MODEL: "gemini-1.5-flash",
+        MODEL: "gemini-2.5-flash", 
         DEBUG_MODE: false,
 
         // --- ЗАДЕРЖКИ (в миллисекундах) ---
@@ -36,7 +36,7 @@ function getScriptConfig() {
 
     const CONFIG = getScriptConfig();
     const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-    let translationMap = new Map(); // ID -> { original, translation }
+    let translationMap = new Map(); 
     let isStopped = false;
 
     // Интерфейс
@@ -55,10 +55,10 @@ function getScriptConfig() {
     container.appendChild(startBtn);
     container.appendChild(stopBtn);
 
-    stopBtn.onclick = () => { isStopped = true; console.warn("🛑 Остановка..."); };
+    stopBtn.onclick = () => { isStopped = true; console.warn("🛑 Останавливаю..."); };
 
     startBtn.onclick = async () => {
-        console.log(`%c--- ЗАПУСК 3.5 [ID MAPPING, DEBUG: ${CONFIG.DEBUG_MODE}] ---`, "color: #1a73e8; font-weight: bold;");
+        console.log(`%c--- ЗАПУСК 3.5 [MODEL: ${CONFIG.MODEL}] ---`, "color: #1a73e8; font-weight: bold;");
         isStopped = false;
         startBtn.disabled = true;
         stopBtn.style.display = 'block';
@@ -120,29 +120,27 @@ function getScriptConfig() {
 
     async function translateWithGemini() {
         if (isStopped) return false;
-        startBtn.innerHTML = '⏳ Gemini localizing...';
+        startBtn.innerHTML = '⏳ Gemini translating...';
         
-        // Формируем массив объектов {id, text}
         const payload = Array.from(translationMap.values()).map(item => ({
             id: item.id,
             text: item.original
         }));
 
-        console.log(`[API] Отправка ${payload.length} объектов в Gemini...`);
+        console.log(`[API] Отправка ${payload.length} объектов в ${CONFIG.MODEL}...`);
 
         const prompt = `Role: Act as a professional translator and Polish localization expert. Your task is to translate video scripts from English to Polish.
 
 Context: This is business/personal development coaching, meditations, sports lessons, psychology podcasts.
 Style: Natural "living" language. Focus on flow.
-Be aware of this rule in polish grammar: W tym zdaniu jest imiesłów przysłówkowy pozostawiając, ale nie ma czasownika в функции orzeczenia. Możliwe, że to tytuł, ale в takim razie zbędna jest kropka.
+Be aware of this rule in polish grammar: W tym zdaniu jest imiesłów przysłówkowy pozostawiając, ale nie ma czasownika в функции orzeczenia. Możliwe, że to tytuл, ale в takim razie zbędна jest kropka.
 Check the name of the speaker and make a research: if it's a man or a woman.
 Grammar: If the speaker is a woman:
   1. Use feminine verb forms (e.g., "zrobiłam", "powiedziałam").
   2. Use feminatives (e.g., "trenerka", "ekspertka"), where needed.
 
-IMPORTANT: You MUST respond ONLY with a valid JSON object.
+IMPORTANT: Respond ONLY with a valid JSON object.
 Structure: {"results": [{"id": "ID_HERE", "translation": "POLISH_TEXT_HERE"}, ...]}
-Order does not matter as long as IDs are correct.
 
 Data to translate: ${JSON.stringify(payload)}`;
 
@@ -156,11 +154,10 @@ Data to translate: ${JSON.stringify(payload)}`;
 
             if (!Array.isArray(results)) throw new Error("Field 'results' is not an array");
 
-            // Сопоставляем переводы по ID (теперь бага со смещением не будет)
             results.forEach(res => {
                 if (translationMap.has(res.id)) {
                     translationMap.get(res.id).translation = res.translation;
-                    console.log(`[Матчинг] ID ${res.id} -> Получен перевод.`);
+                    console.log(`[Матчинг] ID ${res.id} matched.`);
                 }
             });
 
@@ -176,15 +173,11 @@ Data to translate: ${JSON.stringify(payload)}`;
         for (let i = 0; i < items.length; i++) {
             if (isStopped) return;
             const data = items[i];
-            if (!data.translation) {
-                console.warn(`[!] Нет перевода для ID ${data.id}, пропускаю.`);
-                continue;
-            }
+            if (!data.translation) continue;
 
             startBtn.innerHTML = `✍️ ${i+1}/${items.length}`;
-            console.log(`[Вставка] ${i+1}/${items.length} | ID: ${data.id}`);
-
             let row = document.querySelector(`.row-key[data-id="${data.id}"]`);
+            
             let attempts = 0;
             while (!row && attempts < 10) {
                 if (isStopped) return;
@@ -214,8 +207,8 @@ Data to translate: ${JSON.stringify(payload)}`;
             editor.click();
             await new Promise(r => setTimeout(r, CONFIG.FOCUS_DELAY));
 
-            // ВСТАВКА БЕЗ ПРЕДВАРИТЕЛЬНОЙ ОЧИСТКИ
-            console.log(`   -> Пишу: "${text.substring(0, 30)}..."`);
+            // ВСТАВКА БЕЗ ОЧИСТКИ
+            console.log(`   [ID ${id}] Пишу: "${text.substring(0, 30)}..."`);
             document.execCommand('insertText', false, text);
 
             if (!editor.value && !editor.innerText) {
@@ -226,7 +219,6 @@ Data to translate: ${JSON.stringify(payload)}`;
             editor.dispatchEvent(new Event('change', { bubbles: true }));
             await new Promise(r => setTimeout(r, CONFIG.BEFORE_SAVE_DELAY));
 
-            // СОХРАНЕНИЕ
             const saveBtn = document.querySelector('button.save.btn-primary');
             if (saveBtn) {
                 saveBtn.click();
@@ -235,7 +227,6 @@ Data to translate: ${JSON.stringify(payload)}`;
                 editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', ...modifier, bubbles: true }));
             }
 
-            // Ожидание закрытия
             for(let i=0; i<15; i++) {
                 const stillOpen = document.querySelector('.ace_text-input, textarea:not([style*="display: none"])');
                 if (!stillOpen) {
