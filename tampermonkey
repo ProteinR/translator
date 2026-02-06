@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Lokalise Auto-Translator (Gemini 3.14 - Clean Prompt)
+// @name         Lokalise Auto-Translator (Gemini 3.15 - Debug Response)
 // @namespace    http://tampermonkey.net/
-// @version      3.14
+// @version      3.15
 // @grant        GM_xmlhttpRequest
 // @connect      generativelanguage.googleapis.com
 // @match        https://app.lokalise.com/project/*
@@ -38,27 +38,22 @@ function getScriptConfig() {
     let translationMap = new Map(); 
     let isStopped = false;
 
-    // Функция звукового сигнала
     function playSuccessSound() {
         try {
             const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const oscillator = audioCtx.createOscillator();
             const gainNode = audioCtx.createGain();
-
             oscillator.connect(gainNode);
             gainNode.connect(audioCtx.destination);
-
             oscillator.type = 'sine';
             oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); 
             gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
             gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
-
             oscillator.start();
             oscillator.stop(audioCtx.currentTime + 0.5);
         } catch (e) { console.warn("Audio failed:", e); }
     }
 
-    // Интерфейс
     const container = document.createElement('div');
     container.style = 'position:fixed;top:10px;right:10px;z-index:9999;display:flex;gap:5px;';
     document.body.appendChild(container);
@@ -74,15 +69,10 @@ function getScriptConfig() {
     container.appendChild(startBtn);
     container.appendChild(stopBtn);
 
-    stopBtn.onclick = () => { isStopped = true; console.warn("🛑 Процесс прерван."); };
+    stopBtn.onclick = () => { isStopped = true; console.warn("🛑 Остановка..."); };
 
     startBtn.onclick = async () => {
-        if (!CONFIG.GEMINI_API_KEY) {
-            alert("Вставьте API ключ!");
-            return;
-        }
-
-        console.log(`%c--- ЗАПУСК 3.14 [CLEAN PROMPT] ---`, "color: #1a73e8; font-weight: bold;");
+        if (!CONFIG.GEMINI_API_KEY) { alert("Вставьте API ключ!"); return; }
         isStopped = false;
         startBtn.disabled = true;
         stopBtn.style.display = 'block';
@@ -90,21 +80,11 @@ function getScriptConfig() {
 
         try {
             if (!(await scrollAndCollect()) || isStopped) return;
-
-            if (translationMap.size === 0) {
-                console.log("%c--- ПУСТЫХ СТРОК НЕТ ---", "color: green; font-weight: bold;");
-                return;
-            }
-
+            if (translationMap.size === 0) { console.log("Пустых строк нет."); return; }
             if (!(await translateWithGemini()) || isStopped) return;
             await fillTranslations();
-            
-            console.log("%c--- УСПЕХ! ---", "color: #28a745; font-weight: bold;");
             playSuccessSound();
-
-        } catch (err) {
-            console.error(`❌ Ошибка: ${err}`);
-        } finally {
+        } catch (err) { console.error(`Ошибка: ${err}`); } finally {
             startBtn.disabled = false;
             startBtn.innerHTML = '🚀 Запуск перевода';
             stopBtn.style.display = 'none';
@@ -117,19 +97,15 @@ function getScriptConfig() {
         while (sameHeightCount < 3) {
             if (isStopped) return false;
             const rows = document.querySelectorAll('.row-key[data-id]');
-
             for (let row of rows) {
                 const id = row.getAttribute('data-id');
-                const originalText = row.querySelector(`.base-cell-trans .highlight`)?.innerText;
                 const targetCell = row.querySelector(`.cell-trans[data-lang-id="${CONFIG.TARGET_LANG_ID}"] .highlight`);
                 const isEmpty = !targetCell || targetCell.querySelector('.empty') || targetCell.innerText.trim() === "" || targetCell.innerText.trim() === "Empty";
-
-                if (id && originalText && isEmpty && !translationMap.has(id)) {
-                    console.log(`[Сбор] ID: ${id} | EN: "${originalText.substring(0, 30)}..."`);
-                    translationMap.set(id, { id: id, original: originalText, translation: '' });
+                if (id && isEmpty && !translationMap.has(id)) {
+                    const originalText = row.querySelector(`.base-cell-trans .highlight`)?.innerText;
+                    translationMap.set(id, { id, original: originalText, translation: '' });
                 }
             }
-
             startBtn.innerHTML = `📡 Сбор: ${translationMap.size}`;
             window.scrollBy(0, window.innerHeight);
             await new Promise(r => setTimeout(r, CONFIG.SCROLL_DELAY));
@@ -144,46 +120,37 @@ function getScriptConfig() {
     async function translateWithGemini() {
         if (isStopped) return false;
         startBtn.innerHTML = '⏳ Gemini...';
-        
-        const payload = Array.from(translationMap.values()).map(item => ({
-            id: item.id,
-            text: item.original
-        }));
+        const payload = Array.from(translationMap.values()).map(item => ({ id: item.id, text: item.original }));
 
-        // ПРОМПТ ОЧИЩЕН ОТ КИРИЛЛИЦЫ
         const prompt = `Role: Act as a professional translator and Polish localization expert. Your task is to translate video scripts from English to Polish.
 
 Context: This is business/personal development coaching, meditations, sports lessons, psychology podcasts.
 Style: Natural "living" language. Focus on flow.
-Grammar rule: In Polish, if a sentence uses an adverbial participle like "pozostawiając" but lacks a main verb acting as a predicate, it might be a title. In such cases, the trailing period (kropka) is unnecessary and should be omitted.
+Be aware of this rule in polish grammar: W tym zdaniu jest imiesłów przysłówkowy pozostawiając, ale nie ma czasownika в функции orzeczenia. Możливе, że to титул, ale в takim razie zbędна jest kropka.
 Check the name of the speaker and make a research: if it's a man or a woman.
 Grammar: If the speaker is a woman:
   1. Use feminine verb forms (e.g., "zrobiłam", "powiedziałam").
   2. Use feminatives (e.g., "trenerka", "ekspertka"), where needed.
 
-IMPORTANT: Respond ONLY with a valid JSON object.
+IMPORTANT: Respond ONLY with a valid JSON object. 
+Do NOT repeat the translation twice in the output string.
 Structure: {"results": [{"id": "ID_HERE", "translation": "POLISH_TEXT_HERE"}, ...]}
 
 Data to translate: ${JSON.stringify(payload)}`;
 
         try {
             const resp = await fetchGemini(prompt);
+            
+            // --- ТВОЙ ДЕБАГ ЛОГ ---
+            console.log("%c[RAW LLM RESPONSE]:", "color: #7b1fa2; font-weight: bold; background: #f3e5f5; padding: 5px;", resp);
+
             const first = resp.indexOf('{'), last = resp.lastIndexOf('}');
             const data = JSON.parse(resp.substring(first, last + 1));
-            const results = data.results;
-
-            if (!Array.isArray(results)) throw new Error("Format error");
-
-            results.forEach(res => {
-                if (translationMap.has(res.id)) {
-                    translationMap.get(res.id).translation = res.translation;
-                }
+            data.results.forEach(res => {
+                if (translationMap.has(res.id)) translationMap.get(res.id).translation = res.translation;
             });
             return true;
-        } catch (e) { 
-            console.error("❌ API Error:", e); 
-            return false; 
-        }
+        } catch (e) { console.error("API Error", e); return false; }
     }
 
     async function fillTranslations() {
@@ -192,13 +159,10 @@ Data to translate: ${JSON.stringify(payload)}`;
             if (isStopped) return;
             const data = items[i];
             if (!data.translation) continue;
-
             startBtn.innerHTML = `✍️ ${i+1}/${items.length}`;
             let row = document.querySelector(`.row-key[data-id="${data.id}"]`);
-            
             let attempts = 0;
             while (!row && attempts < 10) {
-                if (isStopped) return;
                 window.scrollBy(0, 400);
                 await new Promise(r => setTimeout(r, 300));
                 row = document.querySelector(`.row-key[data-id="${data.id}"]`);
@@ -214,36 +178,27 @@ Data to translate: ${JSON.stringify(payload)}`;
     async function inputProcess(row, text, id) {
         const targetCell = row.querySelector(`.cell-trans[data-lang-id="${CONFIG.TARGET_LANG_ID}"] .highlight`);
         if (!targetCell) return;
-
         targetCell.click();
         await new Promise(r => setTimeout(r, CONFIG.EDITOR_LOAD_DELAY));
 
         let editor = document.querySelector('.ace_text-input, textarea:not([style*="display: none"]), [contenteditable="true"]');
-
         if (editor) {
             editor.focus();
             editor.click();
             await new Promise(r => setTimeout(r, CONFIG.FOCUS_DELAY));
 
-            // ОЧИСТКА
-            const modifier = isMac ? { metaKey: true } : { ctrlKey: true };
-            console.log(`   [ID ${id}] Очистка и вставка...`);
-            editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', code: 'KeyA', keyCode: 65, ...modifier, bubbles: true }));
-            document.execCommand('selectAll', false, null);
-            await new Promise(r => setTimeout(r, 100));
+            // ВСТАВКА (БЕЗ ОЧИСТКИ)
+            console.log(`[ID ${id}] Вставка текста...`);
+            const success = document.execCommand('insertText', false, text);
 
-            editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', keyCode: 8, bubbles: true }));
-            document.execCommand('delete', false, null);
-
-            if (editor.value) editor.value = '';
-            editor.dispatchEvent(new Event('input', { bubbles: true }));
-            await new Promise(r => setTimeout(r, 200));
-
-            // ВСТАВКА
-            document.execCommand('insertText', false, text);
-
-            if (!editor.value && !editor.innerText) {
-                editor.value = text;
+            // Если системная вставка не сработала, используем прямой метод, но только ОДИН раз
+            if (!success || (editor.value !== text && editor.innerText !== text)) {
+                console.warn(`[ID ${id}] insertText не сработал, использую fallback.`);
+                if (editor.nodeName === "TEXTAREA" || editor.nodeName === "INPUT") {
+                    editor.value = text;
+                } else {
+                    editor.innerText = text;
+                }
                 editor.dispatchEvent(new Event('input', { bubbles: true }));
             }
 
@@ -254,15 +209,12 @@ Data to translate: ${JSON.stringify(payload)}`;
             if (saveBtn) {
                 saveBtn.click();
             } else {
+                const modifier = isMac ? { metaKey: true } : { ctrlKey: true };
                 editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', ...modifier, bubbles: true }));
             }
 
             for(let i=0; i<15; i++) {
-                const stillOpen = document.querySelector('.ace_text-input, textarea:not([style*="display: none"])');
-                if (!stillOpen) {
-                    console.log(`✅ ID ${id} готов.`);
-                    return;
-                }
+                if (!document.querySelector('.ace_text-input, textarea:not([style*="display: none"])')) return;
                 await new Promise(r => setTimeout(r, CONFIG.SAVE_CHECK_DELAY));
             }
             row.querySelector('.non-editable-key-name')?.click();
@@ -270,11 +222,10 @@ Data to translate: ${JSON.stringify(payload)}`;
     }
 
     function fetchGemini(prompt) {
-        const url = `https://generativelanguage.googleapis.com/v1/models/${CONFIG.MODEL}:generateContent?key=${CONFIG.GEMINI_API_KEY}`;
         return new Promise((resolve, reject) => {
             GM_xmlhttpRequest({
                 method: "POST",
-                url: url,
+                url: `https://generativelanguage.googleapis.com/v1/models/${CONFIG.MODEL}:generateContent?key=${CONFIG.GEMINI_API_KEY}`,
                 headers: { "Content-Type": "application/json" },
                 data: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
                 onload: (res) => {
