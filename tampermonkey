@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Lokalise Auto-Translator (Gemini 3.4 - Custom Delays & No Clear)
+// @name         Lokalise Auto-Translator (Gemini 3.5 - ID Mapping)
 // @namespace    http://tampermonkey.net/
-// @version      3.4
+// @version      3.5
 // @grant        GM_xmlhttpRequest
 // @connect      generativelanguage.googleapis.com
 // @match        https://app.lokalise.com/project/*
@@ -15,16 +15,16 @@ function getScriptConfig() {
         GEMINI_API_KEY: '',
         TARGET_LANG_ID: '748',
         SOURCE_LANG_ID: '640',
-        MODEL: "gemini-2.5-flash", 
-        DEBUG_MODE: false,               // TRUE - только первые 15 пустых строк
-        
+        MODEL: "gemini-1.5-flash",
+        DEBUG_MODE: false,
+
         // --- ЗАДЕРЖКИ (в миллисекундах) ---
-        SCROLL_DELAY: 2000,              // Пауза при скроллинге
-        EDITOR_LOAD_DELAY: 1200,         // Ожидание появления редактора после клика
-        FOCUS_DELAY: 200,                // Пауза после фокуса в поле
-        BEFORE_SAVE_DELAY: 600,          // Пауза перед нажатием кнопки Save
-        SAVE_CHECK_DELAY: 150,           // Проверка закрытия редактора
-        ROW_NEXT_DELAY: 500              // Пауза перед переходом к следующей строке
+        SCROLL_DELAY: 2000,          // Пауза при скроллинге
+        EDITOR_LOAD_DELAY: 1500,     // Ожидание появления редактора после клика
+        FOCUS_DELAY: 300,            // Пауза после фокуса в поле
+        BEFORE_SAVE_DELAY: 800,      // Пауза перед нажатием кнопки Save
+        SAVE_CHECK_DELAY: 200,       // Проверка закрытия редактора
+        ROW_NEXT_DELAY: 600          // Пауза перед переходом к следующей строке
     };
 }
 // ============================================================
@@ -36,7 +36,7 @@ function getScriptConfig() {
 
     const CONFIG = getScriptConfig();
     const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-    let translationMap = new Map();
+    let translationMap = new Map(); // ID -> { original, translation }
     let isStopped = false;
 
     // Интерфейс
@@ -58,7 +58,7 @@ function getScriptConfig() {
     stopBtn.onclick = () => { isStopped = true; console.warn("🛑 Остановка..."); };
 
     startBtn.onclick = async () => {
-        console.log(`%c--- ЗАПУСК 3.4 [RESUME MODE, DEBUG: ${CONFIG.DEBUG_MODE}] ---`, "color: #1a73e8; font-weight: bold;");
+        console.log(`%c--- ЗАПУСК 3.5 [ID MAPPING, DEBUG: ${CONFIG.DEBUG_MODE}] ---`, "color: #1a73e8; font-weight: bold;");
         isStopped = false;
         startBtn.disabled = true;
         stopBtn.style.display = 'block';
@@ -68,7 +68,7 @@ function getScriptConfig() {
             if (!(await scrollAndCollect()) || isStopped) return;
 
             if (translationMap.size === 0) {
-                console.log("%c--- ВСЕ ПЕРЕВЕДЕНО (Пустых строк не найдено) ---", "color: green; font-weight: bold;");
+                console.log("%c--- ВСЕ ПЕРЕВЕДЕНО ---", "color: green; font-weight: bold;");
                 return;
             }
 
@@ -94,7 +94,6 @@ function getScriptConfig() {
             for (let row of rows) {
                 const id = row.getAttribute('data-id');
                 const originalText = row.querySelector(`.base-cell-trans .highlight`)?.innerText;
-
                 const targetCell = row.querySelector(`.cell-trans[data-lang-id="${CONFIG.TARGET_LANG_ID}"] .highlight`);
                 const isEmpty = !targetCell || targetCell.querySelector('.empty') || targetCell.innerText.trim() === "" || targetCell.innerText.trim() === "Empty";
 
@@ -103,8 +102,8 @@ function getScriptConfig() {
                         window.scrollTo(0, 0);
                         return true;
                     }
-                    console.log(`[Сбор] ID: ${id} (Пустой) | EN: "${originalText.substring(0, 30)}..."`);
-                    translationMap.set(id, { original: originalText, translation: '' });
+                    console.log(`[Сбор] ID: ${id} | EN: "${originalText.substring(0, 30)}..."`);
+                    translationMap.set(id, { id: id, original: originalText, translation: '' });
                 }
             }
 
@@ -121,28 +120,31 @@ function getScriptConfig() {
 
     async function translateWithGemini() {
         if (isStopped) return false;
-        startBtn.innerHTML = '⏳ Gemini is localizing...';
-        const entries = Array.from(translationMap.entries());
-        const texts = entries.map(e => e[1].original);
+        startBtn.innerHTML = '⏳ Gemini localizing...';
+        
+        // Формируем массив объектов {id, text}
+        const payload = Array.from(translationMap.values()).map(item => ({
+            id: item.id,
+            text: item.original
+        }));
 
-        console.log(`[API] Отправка ${texts.length} пустых строк в Gemini...`);
+        console.log(`[API] Отправка ${payload.length} объектов в Gemini...`);
 
-        // ТВОЙ ПРОМПТ БЕЗ ИЗМЕНЕНИЙ
         const prompt = `Role: Act as a professional translator and Polish localization expert. Your task is to translate video scripts from English to Polish.
 
 Context: This is business/personal development coaching, meditations, sports lessons, psychology podcasts.
 Style: Natural "living" language. Focus on flow.
-Be aware of this rule in polish grammar: W tym zdaniu jest imiesłów przysłówkowy pozostawiając, ale nie ma czasownika в функции orzeczenia. Możliwe, że to tytuл, ale в takim razie zbędna jest kropka.
+Be aware of this rule in polish grammar: W tym zdaniu jest imiesłów przysłówkowy pozostawiając, ale nie ma czasownika в функции orzeczenia. Możliwe, że to tytuł, ale в takim razie zbędna jest kropka.
 Check the name of the speaker and make a research: if it's a man or a woman.
 Grammar: If the speaker is a woman:
   1. Use feminine verb forms (e.g., "zrobiłam", "powiedziałam").
   2. Use feminatives (e.g., "trenerka", "ekspertka"), where needed.
 
-IMPORTANT: Respond ONLY with a valid JSON object.
-Structure: {"translations": ["translated_string_1", "translated_string_2", ...]}
-Order must match the input array exactly.
+IMPORTANT: You MUST respond ONLY with a valid JSON object.
+Structure: {"results": [{"id": "ID_HERE", "translation": "POLISH_TEXT_HERE"}, ...]}
+Order does not matter as long as IDs are correct.
 
-Texts to translate: ${JSON.stringify(texts)}`;
+Data to translate: ${JSON.stringify(payload)}`;
 
         try {
             const resp = await fetchGemini(prompt);
@@ -150,15 +152,18 @@ Texts to translate: ${JSON.stringify(texts)}`;
 
             const first = resp.indexOf('{'), last = resp.lastIndexOf('}');
             const data = JSON.parse(resp.substring(first, last + 1));
-            const list = data.translations;
+            const results = data.results;
 
-            if (!Array.isArray(list)) throw new Error("Field 'translations' is not an array");
+            if (!Array.isArray(results)) throw new Error("Field 'results' is not an array");
 
-            entries.forEach((e, i) => {
-                translationMap.get(e[0]).translation = list[i] || '';
+            // Сопоставляем переводы по ID (теперь бага со смещением не будет)
+            results.forEach(res => {
+                if (translationMap.has(res.id)) {
+                    translationMap.get(res.id).translation = res.translation;
+                    console.log(`[Матчинг] ID ${res.id} -> Получен перевод.`);
+                }
             });
 
-            console.log("%c[API] Переводы получены и сопоставлены.", "color: green;");
             return true;
         } catch (e) { 
             console.error("❌ API Error:", e); 
@@ -167,24 +172,29 @@ Texts to translate: ${JSON.stringify(texts)}`;
     }
 
     async function fillTranslations() {
-        const ids = Array.from(translationMap.keys());
-        for (let i = 0; i < ids.length; i++) {
+        const items = Array.from(translationMap.values());
+        for (let i = 0; i < items.length; i++) {
             if (isStopped) return;
-            const id = ids[i];
-            const data = translationMap.get(id);
-            startBtn.innerHTML = `✍️ ${i+1}/${ids.length}`;
+            const data = items[i];
+            if (!data.translation) {
+                console.warn(`[!] Нет перевода для ID ${data.id}, пропускаю.`);
+                continue;
+            }
 
-            let row = document.querySelector(`.row-key[data-id="${id}"]`);
+            startBtn.innerHTML = `✍️ ${i+1}/${items.length}`;
+            console.log(`[Вставка] ${i+1}/${items.length} | ID: ${data.id}`);
+
+            let row = document.querySelector(`.row-key[data-id="${data.id}"]`);
             let attempts = 0;
             while (!row && attempts < 10) {
                 if (isStopped) return;
                 window.scrollBy(0, 400);
                 await new Promise(r => setTimeout(r, 300));
-                row = document.querySelector(`.row-key[data-id="${id}"]`);
+                row = document.querySelector(`.row-key[data-id="${data.id}"]`);
                 attempts++;
             }
             if (row) {
-                await inputProcess(row, data.translation, id);
+                await inputProcess(row, data.translation, data.id);
                 await new Promise(r => setTimeout(r, CONFIG.ROW_NEXT_DELAY));
             }
         }
@@ -194,7 +204,6 @@ Texts to translate: ${JSON.stringify(texts)}`;
         const targetCell = row.querySelector(`.cell-trans[data-lang-id="${CONFIG.TARGET_LANG_ID}"] .highlight`);
         if (!targetCell) return;
 
-        console.log(`[ID ${id}] Взаимодействие...`);
         targetCell.click();
         await new Promise(r => setTimeout(r, CONFIG.EDITOR_LOAD_DELAY));
 
@@ -205,8 +214,8 @@ Texts to translate: ${JSON.stringify(texts)}`;
             editor.click();
             await new Promise(r => setTimeout(r, CONFIG.FOCUS_DELAY));
 
-            // ВСТАВКА (ОЧИСТКА УДАЛЕНА ПО ЗАПРОСУ)
-            console.log(`   -> Вставляю: "${text.substring(0, 30)}..."`);
+            // ВСТАВКА БЕЗ ПРЕДВАРИТЕЛЬНОЙ ОЧИСТКИ
+            console.log(`   -> Пишу: "${text.substring(0, 30)}..."`);
             document.execCommand('insertText', false, text);
 
             if (!editor.value && !editor.innerText) {
@@ -230,7 +239,7 @@ Texts to translate: ${JSON.stringify(texts)}`;
             for(let i=0; i<15; i++) {
                 const stillOpen = document.querySelector('.ace_text-input, textarea:not([style*="display: none"])');
                 if (!stillOpen) {
-                    console.log(`✅ ID ${id} сохранен.`);
+                    console.log(`✅ ID ${id} зафиксирован.`);
                     return;
                 }
                 await new Promise(r => setTimeout(r, CONFIG.SAVE_CHECK_DELAY));
