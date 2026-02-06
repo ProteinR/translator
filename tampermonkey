@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Lokalise Auto-Translator (Gemini 3.12 - Final)
+// @name         Lokalise Auto-Translator (Gemini 3.14 - Clean Prompt)
 // @namespace    http://tampermonkey.net/
-// @version      3.12
+// @version      3.14
 // @grant        GM_xmlhttpRequest
 // @connect      generativelanguage.googleapis.com
 // @match        https://app.lokalise.com/project/*
@@ -12,7 +12,7 @@
 // ============================================================
 function getScriptConfig() {
     return {
-        GEMINI_API_KEY: '', // <-- ВСТАВЬТЕ ВАШ КЛЮЧ ТУТ
+        GEMINI_API_KEY: '',          // <-- ВСТАВЬТЕ ВАШ КЛЮЧ ТУТ
         TARGET_LANG_ID: '748',
         SOURCE_LANG_ID: '640',
         MODEL: "gemini-2.5-flash", 
@@ -23,7 +23,7 @@ function getScriptConfig() {
         FOCUS_DELAY: 300,            // Пауза после фокуса в поле
         BEFORE_SAVE_DELAY: 800,      // Пауза перед нажатием кнопки Save
         SAVE_CHECK_DELAY: 200,       // Проверка закрытия редактора
-        ROW_NEXT_DELAY: 600          // Пауза перед переходом к следующей строке             
+        ROW_NEXT_DELAY: 600          // Пауза перед переходом к следующей строке
     };
 }
 // ============================================================
@@ -40,20 +40,22 @@ function getScriptConfig() {
 
     // Функция звукового сигнала
     function playSuccessSound() {
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        const oscillator = audioCtx.createOscillator();
-        const gainNode = audioCtx.createGain();
+        try {
+            const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const oscillator = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
 
-        oscillator.connect(gainNode);
-        gainNode.connect(audioCtx.destination);
+            oscillator.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
 
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // Нота Ля
-        gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
-        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); 
+            gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
 
-        oscillator.start();
-        oscillator.stop(audioCtx.currentTime + 0.5);
+            oscillator.start();
+            oscillator.stop(audioCtx.currentTime + 0.5);
+        } catch (e) { console.warn("Audio failed:", e); }
     }
 
     // Интерфейс
@@ -72,15 +74,15 @@ function getScriptConfig() {
     container.appendChild(startBtn);
     container.appendChild(stopBtn);
 
-    stopBtn.onclick = () => { isStopped = true; console.warn("🛑 Процесс остановлен пользователем."); };
+    stopBtn.onclick = () => { isStopped = true; console.warn("🛑 Процесс прерван."); };
 
     startBtn.onclick = async () => {
         if (!CONFIG.GEMINI_API_KEY) {
-            alert("Ошибка: Вставьте API ключ в конфигурацию скрипта!");
+            alert("Вставьте API ключ!");
             return;
         }
 
-        console.log(`%c--- ЗАПУСК 3.12 [ID MAPPING + SOUND] ---`, "color: #1a73e8; font-weight: bold;");
+        console.log(`%c--- ЗАПУСК 3.14 [CLEAN PROMPT] ---`, "color: #1a73e8; font-weight: bold;");
         isStopped = false;
         startBtn.disabled = true;
         stopBtn.style.display = 'block';
@@ -90,18 +92,18 @@ function getScriptConfig() {
             if (!(await scrollAndCollect()) || isStopped) return;
 
             if (translationMap.size === 0) {
-                console.log("%c--- ПУСТЫХ СТРОК НЕ НАЙДЕНО ---", "color: green; font-weight: bold;");
+                console.log("%c--- ПУСТЫХ СТРОК НЕТ ---", "color: green; font-weight: bold;");
                 return;
             }
 
             if (!(await translateWithGemini()) || isStopped) return;
             await fillTranslations();
             
-            console.log("%c--- ВСЕ ОПЕРАЦИИ ЗАВЕРШЕНЫ ---", "color: #28a745; font-weight: bold;");
-            playSuccessSound(); // Звуковой сигнал
+            console.log("%c--- УСПЕХ! ---", "color: #28a745; font-weight: bold;");
+            playSuccessSound();
 
         } catch (err) {
-            console.error(`❌ Критическая ошибка: ${err}`);
+            console.error(`❌ Ошибка: ${err}`);
         } finally {
             startBtn.disabled = false;
             startBtn.innerHTML = '🚀 Запуск перевода';
@@ -148,11 +150,12 @@ function getScriptConfig() {
             text: item.original
         }));
 
+        // ПРОМПТ ОЧИЩЕН ОТ КИРИЛЛИЦЫ
         const prompt = `Role: Act as a professional translator and Polish localization expert. Your task is to translate video scripts from English to Polish.
 
 Context: This is business/personal development coaching, meditations, sports lessons, psychology podcasts.
 Style: Natural "living" language. Focus on flow.
-Be aware of this rule in polish grammar: W tym zdaniu jest imiesłów przysłówkowy pozostawiając, ale nie ma czasownika в функции orzeczenia. Możliwe, że to tytuл, ale в takim razie zbędна jest kropka.
+Grammar rule: In Polish, if a sentence uses an adverbial participle like "pozostawiając" but lacks a main verb acting as a predicate, it might be a title. In such cases, the trailing period (kropka) is unnecessary and should be omitted.
 Check the name of the speaker and make a research: if it's a man or a woman.
 Grammar: If the speaker is a woman:
   1. Use feminine verb forms (e.g., "zrobiłam", "powiedziałam").
@@ -165,8 +168,6 @@ Data to translate: ${JSON.stringify(payload)}`;
 
         try {
             const resp = await fetchGemini(prompt);
-            console.log("%c[API RESPONSE]:", "color: #7b1fa2; font-weight: bold;", resp);
-
             const first = resp.indexOf('{'), last = resp.lastIndexOf('}');
             const data = JSON.parse(resp.substring(first, last + 1));
             const results = data.results;
@@ -224,8 +225,21 @@ Data to translate: ${JSON.stringify(payload)}`;
             editor.click();
             await new Promise(r => setTimeout(r, CONFIG.FOCUS_DELAY));
 
-            // Прямая вставка без очистки
-            console.log(`   [ID ${id}] Вставка: "${text.substring(0, 30)}..."`);
+            // ОЧИСТКА
+            const modifier = isMac ? { metaKey: true } : { ctrlKey: true };
+            console.log(`   [ID ${id}] Очистка и вставка...`);
+            editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', code: 'KeyA', keyCode: 65, ...modifier, bubbles: true }));
+            document.execCommand('selectAll', false, null);
+            await new Promise(r => setTimeout(r, 100));
+
+            editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', keyCode: 8, bubbles: true }));
+            document.execCommand('delete', false, null);
+
+            if (editor.value) editor.value = '';
+            editor.dispatchEvent(new Event('input', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 200));
+
+            // ВСТАВКА
             document.execCommand('insertText', false, text);
 
             if (!editor.value && !editor.innerText) {
@@ -240,14 +254,13 @@ Data to translate: ${JSON.stringify(payload)}`;
             if (saveBtn) {
                 saveBtn.click();
             } else {
-                const modifier = isMac ? { metaKey: true } : { ctrlKey: true };
                 editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', ...modifier, bubbles: true }));
             }
 
             for(let i=0; i<15; i++) {
                 const stillOpen = document.querySelector('.ace_text-input, textarea:not([style*="display: none"])');
                 if (!stillOpen) {
-                    console.log(`✅ ID ${id} сохранен.`);
+                    console.log(`✅ ID ${id} готов.`);
                     return;
                 }
                 await new Promise(r => setTimeout(r, CONFIG.SAVE_CHECK_DELAY));
