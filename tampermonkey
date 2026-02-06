@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Lokalise Auto-Translator (Gemini 3.3 - Smart Resume)
+// @name         Lokalise Auto-Translator (Gemini 3.4 - Custom Delays & No Clear)
 // @namespace    http://tampermonkey.net/
-// @version      3.3
+// @version      3.4
 // @grant        GM_xmlhttpRequest
 // @connect      generativelanguage.googleapis.com
 // @match        https://app.lokalise.com/project/*
@@ -12,12 +12,19 @@
 // ============================================================
 function getScriptConfig() {
     return {
-        GEMINI_API_KEY: 'ВАШ_GEMINI_API_KEY',
+        GEMINI_API_KEY: '',
         TARGET_LANG_ID: '748',
         SOURCE_LANG_ID: '640',
-        MODEL: "gemini-2.5-flash",
-        SCROLL_DELAY: 2000,
+        MODEL: "gemini-2.5-flash", 
         DEBUG_MODE: false,               // TRUE - только первые 15 пустых строк
+        
+        // --- ЗАДЕРЖКИ (в миллисекундах) ---
+        SCROLL_DELAY: 2000,              // Пауза при скроллинге
+        EDITOR_LOAD_DELAY: 1200,         // Ожидание появления редактора после клика
+        FOCUS_DELAY: 200,                // Пауза после фокуса в поле
+        BEFORE_SAVE_DELAY: 600,          // Пауза перед нажатием кнопки Save
+        SAVE_CHECK_DELAY: 150,           // Проверка закрытия редактора
+        ROW_NEXT_DELAY: 500              // Пауза перед переходом к следующей строке
     };
 }
 // ============================================================
@@ -32,6 +39,7 @@ function getScriptConfig() {
     let translationMap = new Map();
     let isStopped = false;
 
+    // Интерфейс
     const container = document.createElement('div');
     container.style = 'position:fixed;top:10px;right:10px;z-index:9999;display:flex;gap:5px;';
     document.body.appendChild(container);
@@ -50,7 +58,7 @@ function getScriptConfig() {
     stopBtn.onclick = () => { isStopped = true; console.warn("🛑 Остановка..."); };
 
     startBtn.onclick = async () => {
-        console.log(`%c--- ЗАПУСК 3.3 [RESUME MODE, DEBUG: ${CONFIG.DEBUG_MODE}] ---`, "color: #1a73e8; font-weight: bold;");
+        console.log(`%c--- ЗАПУСК 3.4 [RESUME MODE, DEBUG: ${CONFIG.DEBUG_MODE}] ---`, "color: #1a73e8; font-weight: bold;");
         isStopped = false;
         startBtn.disabled = true;
         stopBtn.style.display = 'block';
@@ -87,9 +95,7 @@ function getScriptConfig() {
                 const id = row.getAttribute('data-id');
                 const originalText = row.querySelector(`.base-cell-trans .highlight`)?.innerText;
 
-                // Проверка: есть ли уже перевод?
                 const targetCell = row.querySelector(`.cell-trans[data-lang-id="${CONFIG.TARGET_LANG_ID}"] .highlight`);
-                // В Lokalise пустая ячейка содержит span.empty или текст "Empty"
                 const isEmpty = !targetCell || targetCell.querySelector('.empty') || targetCell.innerText.trim() === "" || targetCell.innerText.trim() === "Empty";
 
                 if (id && originalText && isEmpty && !translationMap.has(id)) {
@@ -99,9 +105,6 @@ function getScriptConfig() {
                     }
                     console.log(`[Сбор] ID: ${id} (Пустой) | EN: "${originalText.substring(0, 30)}..."`);
                     translationMap.set(id, { original: originalText, translation: '' });
-                } else if (id && !isEmpty && !translationMap.has(id)) {
-                    // Лог для понимания, что мы пропускаем
-                    // console.log(`[Пропуск] ID: ${id} уже имеет перевод.`);
                 }
             }
 
@@ -124,13 +127,16 @@ function getScriptConfig() {
 
         console.log(`[API] Отправка ${texts.length} пустых строк в Gemini...`);
 
+        // ТВОЙ ПРОМПТ БЕЗ ИЗМЕНЕНИЙ
         const prompt = `Role: Act as a professional translator and Polish localization expert. Your task is to translate video scripts from English to Polish.
 
 Context: This is business/personal development coaching, meditations, sports lessons, psychology podcasts.
 Style: Natural "living" language. Focus on flow.
+Be aware of this rule in polish grammar: W tym zdaniu jest imiesłów przysłówkowy pozostawiając, ale nie ma czasownika в функции orzeczenia. Możliwe, że to tytuл, ale в takim razie zbędna jest kropka.
+Check the name of the speaker and make a research: if it's a man or a woman.
 Grammar: If the speaker is a woman:
   1. Use feminine verb forms (e.g., "zrobiłam", "powiedziałam").
-  2. Use feminatives (e.g., "trenerka", "ekspertka").
+  2. Use feminatives (e.g., "trenerka", "ekspertka"), where needed.
 
 IMPORTANT: Respond ONLY with a valid JSON object.
 Structure: {"translations": ["translated_string_1", "translated_string_2", ...]}
@@ -154,9 +160,9 @@ Texts to translate: ${JSON.stringify(texts)}`;
 
             console.log("%c[API] Переводы получены и сопоставлены.", "color: green;");
             return true;
-        } catch (e) {
-            console.error("❌ API Error:", e);
-            return false;
+        } catch (e) { 
+            console.error("❌ API Error:", e); 
+            return false; 
         }
     }
 
@@ -173,13 +179,13 @@ Texts to translate: ${JSON.stringify(texts)}`;
             while (!row && attempts < 10) {
                 if (isStopped) return;
                 window.scrollBy(0, 400);
-                await new Promise(r => setTimeout(r, 200));
+                await new Promise(r => setTimeout(r, 300));
                 row = document.querySelector(`.row-key[data-id="${id}"]`);
                 attempts++;
             }
             if (row) {
                 await inputProcess(row, data.translation, id);
-                await new Promise(r => setTimeout(r, 500));
+                await new Promise(r => setTimeout(r, CONFIG.ROW_NEXT_DELAY));
             }
         }
     }
@@ -190,30 +196,16 @@ Texts to translate: ${JSON.stringify(texts)}`;
 
         console.log(`[ID ${id}] Взаимодействие...`);
         targetCell.click();
-        await new Promise(r => setTimeout(r, 1200));
+        await new Promise(r => setTimeout(r, CONFIG.EDITOR_LOAD_DELAY));
 
         let editor = document.querySelector('.ace_text-input, textarea:not([style*="display: none"]), [contenteditable="true"]');
 
         if (editor) {
             editor.focus();
             editor.click();
-            await new Promise(r => setTimeout(r, 200));
+            await new Promise(r => setTimeout(r, CONFIG.FOCUS_DELAY));
 
-            const modifier = isMac ? { metaKey: true } : { ctrlKey: true };
-
-            // ОЧИСТКА
-            editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'a', code: 'KeyA', keyCode: 65, ...modifier, bubbles: true }));
-            document.execCommand('selectAll', false, null);
-            await new Promise(r => setTimeout(r, 100));
-
-            editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Backspace', code: 'Backspace', keyCode: 8, bubbles: true }));
-            document.execCommand('delete', false, null);
-
-            if (editor.value) editor.value = '';
-            editor.dispatchEvent(new Event('input', { bubbles: true }));
-            await new Promise(r => setTimeout(r, 200));
-
-            // ВСТАВКА
+            // ВСТАВКА (ОЧИСТКА УДАЛЕНА ПО ЗАПРОСУ)
             console.log(`   -> Вставляю: "${text.substring(0, 30)}..."`);
             document.execCommand('insertText', false, text);
 
@@ -223,13 +215,14 @@ Texts to translate: ${JSON.stringify(texts)}`;
             }
 
             editor.dispatchEvent(new Event('change', { bubbles: true }));
-            await new Promise(r => setTimeout(r, 600));
+            await new Promise(r => setTimeout(r, CONFIG.BEFORE_SAVE_DELAY));
 
             // СОХРАНЕНИЕ
             const saveBtn = document.querySelector('button.save.btn-primary');
             if (saveBtn) {
                 saveBtn.click();
             } else {
+                const modifier = isMac ? { metaKey: true } : { ctrlKey: true };
                 editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', ...modifier, bubbles: true }));
             }
 
@@ -240,7 +233,7 @@ Texts to translate: ${JSON.stringify(texts)}`;
                     console.log(`✅ ID ${id} сохранен.`);
                     return;
                 }
-                await new Promise(r => setTimeout(r, 150));
+                await new Promise(r => setTimeout(r, CONFIG.SAVE_CHECK_DELAY));
             }
             row.querySelector('.non-editable-key-name')?.click();
         }
