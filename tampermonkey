@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Lokalise Auto-Translator (Gemini 2.5-Flash + ID Mapping)
+// @name         Lokalise Auto-Translator (Gemini 3.12 - Final)
 // @namespace    http://tampermonkey.net/
-// @version      3.5
+// @version      3.12
 // @grant        GM_xmlhttpRequest
 // @connect      generativelanguage.googleapis.com
 // @match        https://app.lokalise.com/project/*
@@ -12,19 +12,18 @@
 // ============================================================
 function getScriptConfig() {
     return {
-        GEMINI_API_KEY: '',
+        GEMINI_API_KEY: '', // <-- ВСТАВЬТЕ ВАШ КЛЮЧ ТУТ
         TARGET_LANG_ID: '748',
         SOURCE_LANG_ID: '640',
         MODEL: "gemini-2.5-flash", 
-        DEBUG_MODE: false,
 
         // --- ЗАДЕРЖКИ (в миллисекундах) ---
-        SCROLL_DELAY: 2000,          // Пауза при скроллинге
-        EDITOR_LOAD_DELAY: 1500,     // Ожидание появления редактора после клика
-        FOCUS_DELAY: 300,            // Пауза после фокуса в поле
-        BEFORE_SAVE_DELAY: 800,      // Пауза перед нажатием кнопки Save
-        SAVE_CHECK_DELAY: 200,       // Проверка закрытия редактора
-        ROW_NEXT_DELAY: 600          // Пауза перед переходом к следующей строке
+        SCROLL_DELAY: 2000,              
+        EDITOR_LOAD_DELAY: 1500,         
+        FOCUS_DELAY: 300,                
+        BEFORE_SAVE_DELAY: 800,          
+        SAVE_CHECK_DELAY: 200,           
+        ROW_NEXT_DELAY: 600              
     };
 }
 // ============================================================
@@ -39,6 +38,24 @@ function getScriptConfig() {
     let translationMap = new Map(); 
     let isStopped = false;
 
+    // Функция звукового сигнала
+    function playSuccessSound() {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioCtx.createOscillator();
+        const gainNode = audioCtx.createGain();
+
+        oscillator.connect(gainNode);
+        gainNode.connect(audioCtx.destination);
+
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(880, audioCtx.currentTime); // Нота Ля
+        gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.5);
+
+        oscillator.start();
+        oscillator.stop(audioCtx.currentTime + 0.5);
+    }
+
     // Интерфейс
     const container = document.createElement('div');
     container.style = 'position:fixed;top:10px;right:10px;z-index:9999;display:flex;gap:5px;';
@@ -46,7 +63,7 @@ function getScriptConfig() {
 
     const startBtn = document.createElement('button');
     startBtn.innerHTML = '🚀 Запуск перевода';
-    startBtn.style = 'padding:10px;background:#1a73e8;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:bold;';
+    startBtn.style = 'padding:10px;background:#1a73e8;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:bold;box-shadow: 0 2px 5px rgba(0,0,0,0.2);';
 
     const stopBtn = document.createElement('button');
     stopBtn.innerHTML = '🛑 Stop';
@@ -55,10 +72,15 @@ function getScriptConfig() {
     container.appendChild(startBtn);
     container.appendChild(stopBtn);
 
-    stopBtn.onclick = () => { isStopped = true; console.warn("🛑 Останавливаю..."); };
+    stopBtn.onclick = () => { isStopped = true; console.warn("🛑 Процесс остановлен пользователем."); };
 
     startBtn.onclick = async () => {
-        console.log(`%c--- ЗАПУСК 3.5 [MODEL: ${CONFIG.MODEL}] ---`, "color: #1a73e8; font-weight: bold;");
+        if (!CONFIG.GEMINI_API_KEY) {
+            alert("Ошибка: Вставьте API ключ в конфигурацию скрипта!");
+            return;
+        }
+
+        console.log(`%c--- ЗАПУСК 3.12 [ID MAPPING + SOUND] ---`, "color: #1a73e8; font-weight: bold;");
         isStopped = false;
         startBtn.disabled = true;
         stopBtn.style.display = 'block';
@@ -68,15 +90,18 @@ function getScriptConfig() {
             if (!(await scrollAndCollect()) || isStopped) return;
 
             if (translationMap.size === 0) {
-                console.log("%c--- ВСЕ ПЕРЕВЕДЕНО ---", "color: green; font-weight: bold;");
+                console.log("%c--- ПУСТЫХ СТРОК НЕ НАЙДЕНО ---", "color: green; font-weight: bold;");
                 return;
             }
 
             if (!(await translateWithGemini()) || isStopped) return;
             await fillTranslations();
-            console.log("%c--- ВСЁ ЗАВЕРШЕНО ---", "color: green; font-weight: bold;");
+            
+            console.log("%c--- ВСЕ ОПЕРАЦИИ ЗАВЕРШЕНЫ ---", "color: #28a745; font-weight: bold;");
+            playSuccessSound(); // Звуковой сигнал
+
         } catch (err) {
-            console.error(`❌ Ошибка: ${err}`);
+            console.error(`❌ Критическая ошибка: ${err}`);
         } finally {
             startBtn.disabled = false;
             startBtn.innerHTML = '🚀 Запуск перевода';
@@ -98,16 +123,12 @@ function getScriptConfig() {
                 const isEmpty = !targetCell || targetCell.querySelector('.empty') || targetCell.innerText.trim() === "" || targetCell.innerText.trim() === "Empty";
 
                 if (id && originalText && isEmpty && !translationMap.has(id)) {
-                    if (CONFIG.DEBUG_MODE && translationMap.size >= 15) {
-                        window.scrollTo(0, 0);
-                        return true;
-                    }
                     console.log(`[Сбор] ID: ${id} | EN: "${originalText.substring(0, 30)}..."`);
                     translationMap.set(id, { id: id, original: originalText, translation: '' });
                 }
             }
 
-            startBtn.innerHTML = `📡 Сбор пустых: ${translationMap.size}`;
+            startBtn.innerHTML = `📡 Сбор: ${translationMap.size}`;
             window.scrollBy(0, window.innerHeight);
             await new Promise(r => setTimeout(r, CONFIG.SCROLL_DELAY));
             let h = document.body.scrollHeight;
@@ -120,14 +141,12 @@ function getScriptConfig() {
 
     async function translateWithGemini() {
         if (isStopped) return false;
-        startBtn.innerHTML = '⏳ Gemini translating...';
+        startBtn.innerHTML = '⏳ Gemini...';
         
         const payload = Array.from(translationMap.values()).map(item => ({
             id: item.id,
             text: item.original
         }));
-
-        console.log(`[API] Отправка ${payload.length} объектов в ${CONFIG.MODEL}...`);
 
         const prompt = `Role: Act as a professional translator and Polish localization expert. Your task is to translate video scripts from English to Polish.
 
@@ -146,21 +165,19 @@ Data to translate: ${JSON.stringify(payload)}`;
 
         try {
             const resp = await fetchGemini(prompt);
-            console.log("%c[API RAW RESPONSE]:", "color: #7b1fa2; font-weight: bold;", resp);
+            console.log("%c[API RESPONSE]:", "color: #7b1fa2; font-weight: bold;", resp);
 
             const first = resp.indexOf('{'), last = resp.lastIndexOf('}');
             const data = JSON.parse(resp.substring(first, last + 1));
             const results = data.results;
 
-            if (!Array.isArray(results)) throw new Error("Field 'results' is not an array");
+            if (!Array.isArray(results)) throw new Error("Format error");
 
             results.forEach(res => {
                 if (translationMap.has(res.id)) {
                     translationMap.get(res.id).translation = res.translation;
-                    console.log(`[Матчинг] ID ${res.id} matched.`);
                 }
             });
-
             return true;
         } catch (e) { 
             console.error("❌ API Error:", e); 
@@ -207,8 +224,8 @@ Data to translate: ${JSON.stringify(payload)}`;
             editor.click();
             await new Promise(r => setTimeout(r, CONFIG.FOCUS_DELAY));
 
-            // ВСТАВКА БЕЗ ОЧИСТКИ
-            console.log(`   [ID ${id}] Пишу: "${text.substring(0, 30)}..."`);
+            // Прямая вставка без очистки
+            console.log(`   [ID ${id}] Вставка: "${text.substring(0, 30)}..."`);
             document.execCommand('insertText', false, text);
 
             if (!editor.value && !editor.innerText) {
@@ -230,7 +247,7 @@ Data to translate: ${JSON.stringify(payload)}`;
             for(let i=0; i<15; i++) {
                 const stillOpen = document.querySelector('.ace_text-input, textarea:not([style*="display: none"])');
                 if (!stillOpen) {
-                    console.log(`✅ ID ${id} зафиксирован.`);
+                    console.log(`✅ ID ${id} сохранен.`);
                     return;
                 }
                 await new Promise(r => setTimeout(r, CONFIG.SAVE_CHECK_DELAY));
