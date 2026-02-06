@@ -18,12 +18,12 @@ function getScriptConfig() {
         MODEL: "gemini-2.5-flash", 
 
         // --- ЗАДЕРЖКИ (в миллисекундах) ---
-        SCROLL_DELAY: 2000,              
-        EDITOR_LOAD_DELAY: 1500,         
-        FOCUS_DELAY: 300,                
-        BEFORE_SAVE_DELAY: 800,          
-        SAVE_CHECK_DELAY: 200,           
-        ROW_NEXT_DELAY: 600              
+        SCROLL_DELAY: 2000,          // Пауза при скроллинге
+        EDITOR_LOAD_DELAY: 1500,     // Ожидание появления редактора после клика
+        FOCUS_DELAY: 300,            // Пауза после фокуса в поле
+        BEFORE_SAVE_DELAY: 800,      // Пауза перед нажатием кнопки Save
+        SAVE_CHECK_DELAY: 200,       // Проверка закрытия редактора
+        ROW_NEXT_DELAY: 600          // Пауза перед переходом к следующей строке             
     };
 }
 // ============================================================
